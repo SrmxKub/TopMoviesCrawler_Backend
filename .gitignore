@@ -1,8 +1,9 @@
+*.DS_Store
+
 app/export/*.csv
+app/controller.py
+
 app/__pycache__/
 app/services/__pycache__/
 app/api/__pycache__/
 app/schemas/__pycache__/
-
-*.DS_Store
-app/controller.py

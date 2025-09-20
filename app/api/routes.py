@@ -34,7 +34,7 @@ def search_movies(
 
 
 # Export Router
-export_router = APIRouter(prefix="/export", tags=["Export"])
+export_router = APIRouter(prefix="/movies/export", tags=["Export"])
 export_service = ExportService()
 
 @export_router.get("/csv")
