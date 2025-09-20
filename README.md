@@ -17,7 +17,7 @@ git clone https://github.com/SrmxKub/TopMoviesCrawler_Backend
 
 **2. Navigate into the backend folder**
 ```bash
-cd backend
+cd TopMoviesCrawler_Backend
 ```
 
 **3. (Optional) Create and activate a virtual environment**
