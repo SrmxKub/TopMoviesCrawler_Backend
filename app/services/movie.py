@@ -3,8 +3,10 @@ import requests
 import csv
 import re
 import json
+from typing import List
 from pydantic import TypeAdapter
 from concurrent.futures import ThreadPoolExecutor
+from app.schemas.exceptions import *
 from app.schemas.crawler import *
 from app.services.export import *
 
@@ -15,10 +17,21 @@ class MovieService:
         self.base_url = "https://editorial.rottentomatoes.com/guide/best-movies-of-all-time/"
         self.exporter = ExportService()
         
+        # self.headers = {
+        #     "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        #     "Accept-Language": "en-US,en;q=0.9",
+        # }
         self.headers = {
-            "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "User-Agent":   
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/120.0.0.0 Safari/537.36",
             "Accept-Language": "en-US,en;q=0.9",
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+            "Referer": "https://www.rottentomatoes.com/"
         }
+        
+        self.session = requests.Session()
         
         self.page1_pattern = {
             "row": re.compile(r"<tr.*?>(.*?)</tr>", re.S),
@@ -47,8 +60,14 @@ class MovieService:
             },
             "score_pattern": {
                 "all": re.compile(r"<media-scorecard.*?>(.*?)</media-scorecard>", re.S),
-                "tomato": {"score": re.compile(r'<rt-text.*?slot="criticsScore".*?(\d{1,2})%.*?</rt-text>', re.S), "count": re.compile(r'<rt-link.*?slot="criticsReviews".*?>(.*?)</rt-link>', re.S)},
-                "popcorn": {"score": re.compile(r'<rt-text.*?slot="audienceScore".*?(\d{1,2})%.*?</rt-text>', re.S), "count": re.compile(r'<rt-link.*?slot="audienceReviews".*?>(.*?)</rt-link>', re.S)},
+                "tomato": {
+                    "score": re.compile(r'<rt-text.*?slot="criticsScore".*?(\d{1,2})%.*?</rt-text>', re.S), 
+                    "count": re.compile(r'<rt-link.*?slot="criticsReviews".*?>(.*?)</rt-link>', re.S)
+                },
+                "popcorn": {
+                    "score": re.compile(r'<rt-text.*?slot="audienceScore".*?(\d{1,2})%.*?</rt-text>', re.S), 
+                    "count": re.compile(r'<rt-link.*?slot="audienceReviews".*?>(.*?)</rt-link>', re.S)
+                },
             }
         }
 
@@ -58,117 +77,154 @@ class MovieService:
 
     def _crawl_movie_list(self) -> List[dict]:
         try:
-            response = requests.get(self.base_url, headers=self.headers, timeout=10)
+            response = self.session.get(self.base_url, headers=self.headers, timeout=10)
             response.raise_for_status()
-            movies = []
-            for row in self.page1_pattern["row"].findall(response.text):
-                try:
-                    td = self.page1_pattern["td"].findall(row)
-                    idx = int(float(td[0].strip()))
-                    detail_html = self.page1_pattern["detail"].search(td[1].strip()).group(1).strip()
-                    title = self.page1_pattern["title"].search(detail_html).group(1).strip()
-                    link = self.page1_pattern["link"].search(detail_html).group(1).strip()
-                    year = int(self.page1_pattern["year"].search(detail_html).group(1))
-                    rating = int(self.page1_pattern["score"].search(td[1].strip()).group(1))
-                    movies.append({"index": idx, "rating": rating, "title": title, "link": link, "year": year})
-                except (AttributeError, IndexError, ValueError):
-                    continue
-            return movies
-        except requests.RequestException:
-            raise ConnectionError("Could not connect to the source server.")
+            
+        except requests.RequestException as e:
+            raise ScraperError(f"Failed to fetch movie list: {str(e)}")
+            
+        movies = []
+        for row in self.page1_pattern["row"].findall(response.text):
+            try:
+                td = self.page1_pattern["td"].findall(row)
+                idx = int(float(td[0].strip()))
+                detail_html = self.page1_pattern["detail"].search(td[1].strip()).group(1).strip()
+                title = self.page1_pattern["title"].search(detail_html).group(1).strip()
+                link = self.page1_pattern["link"].search(detail_html).group(1).strip()
+                year = int(self.page1_pattern["year"].search(detail_html).group(1))
+                rating = int(self.page1_pattern["score"].search(td[1].strip()).group(1))
+                movies.append({"index": idx, "rating": rating, "title": title, "link": link, "year": year})
+            except (AttributeError, IndexError, ValueError):
+                continue
+            
+        if not movies:
+            raise NotFoundError("No movies found on the main page.")
+        
+        return movies
 
     def _crawl_movie_details(self, url) -> dict:
+        
         try:
-            response = requests.get(url, headers=self.headers, timeout=10)
+            response = self.session.get(url, headers=self.headers, timeout=10)
             response.raise_for_status()
-            html = response.text
-            details = {}
             
-            if (poster_match := self.page2_pattern["poster_img"].search(html)):
-                details["poster_img"] = poster_match.group(1).strip()
-
-            if (desc_match := self.page2_pattern["description_pattern"].search(html)):
-                details["description"] = re.sub(r'<.*?>', '', desc_match.group(1).strip())
-
-            if (genre_match := self.page2_pattern["json"]["genre"].search(html)):
-                details["genre"] = genre_match.group(1).replace('"', '').replace(', ', ',').lower()
-            
-            if (json_script_match := self.page2_pattern["json"]["all"].search(html)):
-                json_content = json_script_match.group(1)
-                if (cover_img_match := self.page2_pattern["json"]["cover_img"].search(json_content)):
-                    details["cover_img"] = cover_img_match.group(1).strip()
-                if (release_match := self.page2_pattern["json"]["release"].search(json_content)):
-                    details["release_date"] = release_match.group(1).strip()
-
-            if (score_card_match := self.page2_pattern["score_pattern"]["all"].search(html)):
-                score_card = score_card_match.group(1)
-                if (t_score := self.page2_pattern["score_pattern"]["tomato"]["score"].search(score_card)):
-                    details["tomato_score"] = int(t_score.group(1))
-                if (t_count := self.page2_pattern["score_pattern"]["tomato"]["count"].search(score_card)):
-                    details["tomato_reviews"] = int(re.sub(r'\D', '', t_count.group(1)))
-                if (p_score := self.page2_pattern["score_pattern"]["popcorn"]["score"].search(score_card)):
-                    details["audience_score"] = int(p_score.group(1))
-                if (p_count := self.page2_pattern["score_pattern"]["popcorn"]["count"].search(score_card)):
-                    details["audience_ratings"] = int(re.sub(r'\D', '', p_count.group(1).replace(',', '')))
-            
-            if (cast_crew_match := self.page2_pattern["cast_crew"]["all"].search(html)):
-                cast_crew_content = cast_crew_match.group(1)
-                names = self.page2_pattern["cast_crew"]["name"].findall(cast_crew_content)
-                roles = self.page2_pattern["cast_crew"]["role"].findall(cast_crew_content)
-                imgs = self.page2_pattern["cast_crew"]["img"].findall(cast_crew_content)
-                cast_list = [
-                    {"name": names[i].strip(), "role": roles[i].strip() if i < len(roles) else "", "img": imgs[i].strip() if i < len(imgs) else ""}
-                    for i in range(len(names))
-                ]
-                details["cast_crew"] = cast_list
-            
-            return details
-        except requests.RequestException:
+        except requests.RequestException as e:
             return {}
+        
+        html = response.text
+        details = {}
+        
+        if (poster_match := self.page2_pattern["poster_img"].search(html)):
+            details["poster_img"] = poster_match.group(1).strip()
+
+        if (desc_match := self.page2_pattern["description_pattern"].search(html)):
+            details["description"] = re.sub(r'<.*?>', '', desc_match.group(1).strip())
+
+        if (genre_match := self.page2_pattern["json"]["genre"].search(html)):
+            details["genre"] = genre_match.group(1).replace('"', '').replace(', ', ',').lower()
+        
+        if (json_script_match := self.page2_pattern["json"]["all"].search(html)):
+            json_content = json_script_match.group(1)
+            if (cover_img_match := self.page2_pattern["json"]["cover_img"].search(json_content)):
+                details["cover_img"] = cover_img_match.group(1).strip()
+            if (release_match := self.page2_pattern["json"]["release"].search(json_content)):
+                details["release_date"] = release_match.group(1).strip()
+
+        if (score_card_match := self.page2_pattern["score_pattern"]["all"].search(html)):
+            score_card = score_card_match.group(1)
+            if (t_score := self.page2_pattern["score_pattern"]["tomato"]["score"].search(score_card)):
+                details["tomato_score"] = int(t_score.group(1))
+            if (t_count := self.page2_pattern["score_pattern"]["tomato"]["count"].search(score_card)):
+                details["tomato_reviews"] = int(re.sub(r'\D', '', t_count.group(1)))
+            if (p_score := self.page2_pattern["score_pattern"]["popcorn"]["score"].search(score_card)):
+                details["audience_score"] = int(p_score.group(1))
+            if (p_count := self.page2_pattern["score_pattern"]["popcorn"]["count"].search(score_card)):
+                details["audience_ratings"] = int(re.sub(r'\D', '', p_count.group(1).replace(',', '')))
+        
+        if (cast_crew_match := self.page2_pattern["cast_crew"]["all"].search(html)):
+            cast_crew_content = cast_crew_match.group(1)
+            names = self.page2_pattern["cast_crew"]["name"].findall(cast_crew_content)
+            roles = self.page2_pattern["cast_crew"]["role"].findall(cast_crew_content)
+            imgs = self.page2_pattern["cast_crew"]["img"].findall(cast_crew_content)
+            cast_list = [
+                {"name": names[i].strip(), "role": roles[i].strip() if i < len(roles) else "", "img": imgs[i].strip() if i < len(imgs) else ""}
+                for i in range(len(names))
+            ]
+            details["cast_crew"] = cast_list
+        
+        return details
             
     def _get_all_enriched_movies(self) -> List[dict]:
-        movies = self._crawl_movie_list()
-        if not movies:
-            return []
-
+        
+        try:
+            movies = self._crawl_movie_list()
+        except ScraperError:
+            if os.path.exists(self.exporter.csv_path):
+                print("Using existing CSV database due to scraping error.")
+                return self.exporter.import_movies_csv()
+            else:
+                raise
+            
         with ThreadPoolExecutor(max_workers=os.cpu_count() * 2) as executor:
             futures = [executor.submit(self._crawl_movie_details, movie['link']) for movie in movies]
             details_list = [f.result() for f in futures]
 
-        enriched_movies = []
         for i, movie in enumerate(movies):
             movie.update(details_list[i])
-            enriched_movies.append(movie)
-        
-        return enriched_movies
 
+        return movies
+    
     # ==================================================================
     # Public API-like Methods
     # ==================================================================
 
-    # Save data to CSV
-    def update_movie_database(self) -> UpdateResponse:
+    def get_all_genres(self, movies=[]) -> GenreListResponse:
+        """
+        Returns a sorted list of all unique, normalized genres from top movies.
+        Normalized: lowercase + stripped whitespace.
+        """
+        if not movies:
+            if os.path.exists(self.exporter.csv_path):
+                movies = self.exporter.import_movies_csv()
+            else:
+                # fallback: crawl online if CSV not available
+                movies = self._get_all_enriched_movies()
+            
+        genres = set()
+        for m in movies:
+            if m.get('genre'):
+                for g in m['genre'].split(','):
+                    norm_g = g.strip().lower()
+                    if norm_g:
+                        genres.add(norm_g)
+        return GenreListResponse(genres=sorted(genres))
+
+    def update_movie_database(self) -> UpdateMoviesResponse:
         """[ENDPOINT] Fetches all movie data and saves it to the CSV file."""
         print("Updating database...")
+
+        enriched_movies = self._get_all_enriched_movies()
+        if not enriched_movies:
+            raise NotFoundError("No movies found to update.")
+
+        # Print top 3 movies for verification
+        print("\n--- Top 3 Movies ---")
+        for i, movie in enumerate(enriched_movies[:3]):
+            print(f"\n========== Movie #{i+1} ==========")
+            for key, value in movie.items():
+                print(f"  - {key}: {value}")
+        print("===============================\n")
+        
+        # Convert Dict to MovieDetails model
+        movies_adapter = TypeAdapter(List[MovieDetails])
+        validated_movies = movies_adapter.validate_python(enriched_movies)
+
+        headers = [
+            'index', 'rating', 'title', 'genre', 'year', 'description', 'link', 
+            'poster_img', 'cover_img', 'release_date', 'tomato_score', 
+            'tomato_reviews', 'audience_score', 'audience_ratings', 'cast_crew'
+        ]
         try:
-            enriched_movies = self._get_all_enriched_movies()
-            if not enriched_movies:
-                return {"status": "error", "message": "No movies found to update."}
-
-            # Print top 10 movies for verification
-            print("\n--- Top 10 Movies ---")
-            for i, movie in enumerate(enriched_movies[:10]):
-                print(f"\n========== Movie #{i+1} ==========")
-                for key, value in movie.items():
-                    print(f"  - {key}: {value}")
-            print("===============================\n")
-
-            headers = [
-                'index', 'rating', 'title', 'genre', 'year', 'description', 'link', 
-                'poster_img', 'cover_img', 'release_date', 'tomato_score', 
-                'tomato_reviews', 'audience_score', 'audience_ratings', 'cast_crew'
-            ]
-            
             os.makedirs(self.exporter.csv_folder, exist_ok=True)
             with open(self.exporter.csv_path, 'w', newline='', encoding='utf-8') as f:
                 writer = csv.DictWriter(f, fieldnames=headers, extrasaction='ignore')
@@ -177,43 +233,44 @@ class MovieService:
                     if 'cast_crew' in movie and isinstance(movie['cast_crew'], list):
                         movie['cast_crew'] = json.dumps(movie['cast_crew'])
                     writer.writerow(movie)
+        
+            print(f"Database update complete. Saved {len(enriched_movies)} movies.")
             
-            message = f"Database update complete. Saved {len(enriched_movies)} movies."
-            print(message)
-            return UpdateResponse(status="success", message=message)
-
         except Exception as e:
-            print(f"An error occurred during database update: {e}")
-            return UpdateResponse(status="error", message=str(e))
+            raise ScraperError(f"An error occurred during database update: {str(e)}")
+        
+        return UpdateMoviesResponse(movies=validated_movies)
 
-    def search_movies_live(self, name=None, genre=[]) -> SearchResponse:
+    def search_movies_live(self, name=None, genre=[]) -> SearchMoviesResponse:
+        
         print("Performing live search... this may take a moment.")
-        try:
-            enriched_movies = self._get_all_enriched_movies()
-            if not enriched_movies:
-                return SearchResponse(status="error", message="No movies found on the main page.", count=0, movies=[])
+        movies = self._get_all_enriched_movies()
+        
+        if name:
+            try:
+                pattern = re.compile(re.escape(name), re.IGNORECASE)
+                movies = [m for m in movies if pattern.search(m.get('title', ''))]
+            except re.error: 
+                # Fallback to simple substring match if regex fails
+                movies = [m for m in movies if name.lower() in m.get('title', '').lower()]
 
-            filtered_movies = enriched_movies
-            if name:
-                filtered_movies = [m for m in filtered_movies if name.lower() in m.get('title', '').lower()]
+        if genre:
+            available_genres = self.get_all_genres(movies).genres
+            if available_genres:
+                movies = [m for m in movies if any(g in (m.get('genre') or '').lower() for g in available_genres)]
+            else:
+                movies = []
 
-            if genre:
-                search_genres = [g.lower().replace('-', '') for g in genre]
-                filtered_movies = [
-                    m for m in filtered_movies 
-                    if any(g in m.get('genre', '').lower().replace('-', '') for g in search_genres)
-                ]
-            
-            # Convert Dict to MovieDetails model
-            movies_adapter = TypeAdapter(List[MovieDetails])
-            validated_movies = movies_adapter.validate_python(filtered_movies)
+        if not movies:
+            raise NotFoundError("No movies matched your search criteria.")
+        
+        # Convert Dict to MovieDetails model
+        movies_adapter = TypeAdapter(List[MovieDetails])
+        validated_movies = movies_adapter.validate_python(movies)
 
-            print("Live search complete!")
-            return SearchResponse(status="success", message="Movies found", count=len(filtered_movies), movies=validated_movies)
-
-        except Exception as e:
-            print(f"An error occurred during live search: {e}")
-            return SearchResponse(status="error", message=str(e), count=0, movies=[])
+        print("Live search complete!")
+        
+        return SearchMoviesResponse(count=len(movies), movies=validated_movies)
 
 # ==================================================================
 # Example Usage
