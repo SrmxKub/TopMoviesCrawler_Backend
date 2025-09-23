@@ -9,6 +9,7 @@ from concurrent.futures import ThreadPoolExecutor
 from app.schemas.exceptions import *
 from app.schemas.crawler import *
 from app.services.export import *
+import time
 
 
 class MovieService:
@@ -155,9 +156,10 @@ class MovieService:
         return details
             
     def _get_all_enriched_movies(self) -> List[dict]:
-        
+        time_start = time.time()
         try:
             movies = self._crawl_movie_list()
+            print("use crawling")
         except ScraperError:
             if os.path.exists(self.exporter.csv_path):
                 print("Using existing CSV database due to scraping error.")
@@ -165,13 +167,13 @@ class MovieService:
             else:
                 raise
             
-        with ThreadPoolExecutor(max_workers=os.cpu_count() * 2) as executor:
+        with ThreadPoolExecutor(max_workers=int(os.cpu_count()*2.5)) as executor:
             futures = [executor.submit(self._crawl_movie_details, movie['link']) for movie in movies]
             details_list = [f.result() for f in futures]
 
         for i, movie in enumerate(movies):
             movie.update(details_list[i])
-
+        print("time using:", time.time() - time_start)
         return movies
     
     # ==================================================================
@@ -271,6 +273,23 @@ class MovieService:
         print("Live search complete!")
         
         return SearchMoviesResponse(count=len(movies), movies=validated_movies)
+
+
+    def get_movie_details(self, name=None):
+        # return "ok"
+        print("movie_name:", name)
+        if name is None or len(name) == 0:
+            return NotFoundError("No movies matched your search criteria.")
+        movies = self._crawl_movie_list()
+        for movie in movies:
+            if re.match(rf'^{name}$', movie["title"], re.IGNORECASE):
+                # return "ok"
+                result = self._crawl_movie_details(movie['link'])
+                movies_adapter = TypeAdapter(MovieDetails)
+                movie.update(result)
+                return movies_adapter.validate_python(movie)
+
+        return NotFoundError("No movies matched your search criteria.")
 
 # ==================================================================
 # Example Usage

@@ -33,6 +33,10 @@ def search_movies(
     """Search movies live by name or genre."""
     return movies_service.search_movies_live(name=name, genre=genre or [])
 
+@movies_router.get("/{movie_name}", response_model=MovieDetails)
+def get_movie_details(movie_name: str):
+    return movies_service.get_movie_details(movie_name)
+
 @movies_router.get("/genres", response_model=GenreListResponse)
 def get_all_genres():
     """List all available genres in the movie database."""
