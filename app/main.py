@@ -15,7 +15,7 @@ app.add_middleware(
 # Include all routers
 app.include_router(health_router)
 app.include_router(movies_router)
-app.include_router(export_router) 
+# app.include_router(export_router) 
 
 # Global Exception Handlers
 @app.exception_handler(NotFoundError)

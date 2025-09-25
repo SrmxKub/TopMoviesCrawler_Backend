@@ -20,12 +20,14 @@ async def health_check():
 movies_router = APIRouter(prefix="/movies", tags=["Movies"])
 movies_service = MovieService()
 
-@movies_router.post("/update", response_model=UpdateMoviesResponse)
-def update_movies():
-    """Trigger update movie database (scraping + save to CSV)."""
-    return movies_service.update_movie_database()
+# comment update moveis csv
+# @movies_router.post("/update", response_model=UpdateMoviesResponse)
+# def update_movies():
+#     """Trigger update movie database (scraping + save to CSV)."""
+#     return movies_service.update_movie_database()
 
-@movies_router.get("/search", response_model=SearchMoviesResponse)
+# use this as main crawler endpoint
+@movies_router.get("/", response_model=SearchMoviesResponse)
 def search_movies(
     name: Optional[str] = None,
     genre: Optional[List[str]] = Query(default=None)
@@ -44,11 +46,11 @@ def get_all_genres():
 
 
 # Export Router
-export_router = APIRouter(prefix="/movies/export", tags=["Export"])
-export_service = ExportService()
+# export_router = APIRouter(prefix="/movies/export", tags=["Export"])
+# export_service = ExportService()
 
-@export_router.get("/csv")
-def download_csv():
-    """Download the movie database CSV."""
-    return export_service.export_csv()
+# @export_router.get("/csv")
+# def download_csv():
+#     """Download the movie database CSV."""
+#     return export_service.export_csv()
 
