@@ -242,24 +242,13 @@ class MovieService:
         movies = self._get_all_enriched_movies()
         
         if name:
-            try:
-                pattern = re.compile(re.escape(name), re.IGNORECASE)
-                movies = [m for m in movies if pattern.search(m.get('title', ''))]
-            except re.error: 
-                # Fallback to simple substring match if regex fails
-                movies = [m for m in movies if name.lower() in m.get('title', '').lower()]
+            pattern = re.compile(re.escape(name), re.IGNORECASE)
+            movies = [m for m in movies if pattern.search(m.get('title', '').lower())]
 
         if genre:
-            
-            target_genres = [g.lower() for g in genre]
-            filtered = []
-            
-            for m in movies:
-                movie_genres = (m.get('genre') or '').lower().split(',')
-                if any(g in movie_genres for g in target_genres):
-                    filtered.append(m)
-
-            movies = filtered
+            for g in genre:
+                g = g.lower().strip()
+                movies = [m for m in movies if re.search(f"{re.escape(g)}", m.get('genre', '').lower())]
             
             # available_genres = self.get_all_genres(movies).genres
             # if available_genres:
