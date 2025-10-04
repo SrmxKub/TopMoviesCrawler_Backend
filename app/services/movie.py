@@ -245,12 +245,6 @@ class MovieService:
             for g in genre:
                 g = g.lower().strip()
                 movies = [m for m in movies if re.search(f"{re.escape(g)}", m.get('genre', '').lower())]
-            
-            # available_genres = self.get_all_genres(movies).genres
-            # if available_genres:
-            #     movies = [m for m in movies if any(g in (m.get('genre') or '').lower() for g in available_genres)]
-            # else:
-            #     movies = []
 
         if not movies:
             raise NotFoundError("No movies matched your search criteria.")
@@ -264,14 +258,16 @@ class MovieService:
         return SearchMoviesResponse(count=len(movies), movies=validated_movies)
 
     def get_movie_details(self, name=None):
-        # return "ok"
-        print("movie_name:", name)
+        
+        print("Movie name:", name) # Debugging line
+        
         if name is None or len(name) == 0:
             return NotFoundError("No movies matched your search criteria.")
+        
         movies = self._crawl_movie_list()
+        
         for movie in movies:
             if re.match(rf'^{name}$', movie["title"], re.IGNORECASE):
-                # return "ok"
                 result = self._crawl_movie_details(movie['link'])
                 movies_adapter = TypeAdapter(MovieDetails)
                 movie.update(result)
