@@ -3,13 +3,14 @@ import requests
 import csv
 import re
 import json
+import random
 from typing import List
 from pydantic import TypeAdapter
 from concurrent.futures import ThreadPoolExecutor
+from app.services.header import *
 from app.schemas.exceptions import *
 from app.schemas.crawler import *
 from app.services.export import *
-import time
 
 
 class MovieService:
@@ -17,22 +18,8 @@ class MovieService:
         
         self.base_url = "https://editorial.rottentomatoes.com/guide/best-movies-of-all-time/"
         self.exporter = ExportService()
-        
-        # self.headers = {
-        #     "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-        #     "Accept-Language": "en-US,en;q=0.9",
-        # }
-        self.headers = {
-            "User-Agent":   
-                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                "AppleWebKit/537.36 (KHTML, like Gecko) "
-                "Chrome/120.0.0.0 Safari/537.36",
-            "Accept-Language": "en-US,en;q=0.9",
-            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
-            "Referer": "https://www.rottentomatoes.com/"
-        }
-        
         self.session = requests.Session()
+        self.header = HeaderService()
         
         self.page1_pattern = {
             "row": re.compile(r"<tr.*?>(.*?)</tr>", re.S),
@@ -72,13 +59,21 @@ class MovieService:
             }
         }
 
+    def _build_headers(self) -> dict:
+        return {
+            "User-Agent": random.choice(self._user_agents),
+            "Accept-Language": random.choice(self._accept_languages),
+            "Accept": random.choice(self._accepts),
+            "Referer": random.choice(self._referers),
+        }
+
     # ==================================================================
     # Internal Scraping Logic
     # ==================================================================
 
     def _crawl_movie_list(self) -> List[dict]:
         try:
-            response = self.session.get(self.base_url, headers=self.headers, timeout=10)
+            response = self.session.get(self.base_url, headers=self.header.build_headers(), timeout=10)
             response.raise_for_status()
             
         except requests.RequestException as e:
@@ -106,7 +101,7 @@ class MovieService:
     def _crawl_movie_details(self, url) -> dict:
         
         try:
-            response = self.session.get(url, headers=self.headers, timeout=10)
+            response = self.session.get(url, headers=self.header.build_headers(), timeout=10)
             response.raise_for_status()
             
         except requests.RequestException as e:
@@ -156,10 +151,9 @@ class MovieService:
         return details
             
     def _get_all_enriched_movies(self) -> List[dict]:
-        time_start = time.time()
+        
         try:
             movies = self._crawl_movie_list()
-            print("use crawling")
         except ScraperError:
             if os.path.exists(self.exporter.csv_path):
                 print("Using existing CSV database due to scraping error.")
@@ -167,13 +161,12 @@ class MovieService:
             else:
                 raise
             
-        with ThreadPoolExecutor(max_workers=int(os.cpu_count()*2.5)) as executor:
+        with ThreadPoolExecutor(max_workers=os.cpu_count() * 2) as executor:
             futures = [executor.submit(self._crawl_movie_details, movie['link']) for movie in movies]
             details_list = [f.result() for f in futures]
 
         for i, movie in enumerate(movies):
             movie.update(details_list[i])
-        print("time using:", time.time() - time_start)
         return movies
     
     # ==================================================================
@@ -257,11 +250,22 @@ class MovieService:
                 movies = [m for m in movies if name.lower() in m.get('title', '').lower()]
 
         if genre:
-            available_genres = self.get_all_genres(movies).genres
-            if available_genres:
-                movies = [m for m in movies if any(g in (m.get('genre') or '').lower() for g in available_genres)]
-            else:
-                movies = []
+            
+            target_genres = [g.lower() for g in genre]
+            filtered = []
+            
+            for m in movies:
+                movie_genres = (m.get('genre') or '').lower().split(',')
+                if any(g in movie_genres for g in target_genres):
+                    filtered.append(m)
+
+            movies = filtered
+            
+            # available_genres = self.get_all_genres(movies).genres
+            # if available_genres:
+            #     movies = [m for m in movies if any(g in (m.get('genre') or '').lower() for g in available_genres)]
+            # else:
+            #     movies = []
 
         if not movies:
             raise NotFoundError("No movies matched your search criteria.")
@@ -273,44 +277,3 @@ class MovieService:
         print("Live search complete!")
         
         return SearchMoviesResponse(count=len(movies), movies=validated_movies)
-
-
-    def get_movie_details(self, name=None):
-        # return "ok"
-        print("movie_name:", name)
-        if name is None or len(name) == 0:
-            return NotFoundError("No movies matched your search criteria.")
-        movies = self._crawl_movie_list()
-        for movie in movies:
-            if re.match(rf'^{name}$', movie["title"], re.IGNORECASE):
-                # return "ok"
-                result = self._crawl_movie_details(movie['link'])
-                movies_adapter = TypeAdapter(MovieDetails)
-                movie.update(result)
-                return movies_adapter.validate_python(movie)
-
-        return NotFoundError("No movies matched your search criteria.")
-
-# ==================================================================
-# Example Usage
-# ==================================================================
-# if __name__ == "__main__":
-#     movie_service = MovieService()
-
-    # --- Use Case 1: Create/update the CSV database ---
-    # update_response = movie_service.update_movie_database()
-    # print(json.dumps(update_response, indent=2))
-
-
-    # --- Use Case 2: Perform a live search without using the CSV file ---
-    # Search by Name
-    # print("\n--- Live Search for name 'Taxi' ---")
-    # live_search_response = controller.search_movies_live(name="Taxi")
-    # print(json.dumps(live_search_response, indent=2))
-
-
-    # Search by Genre
-    # All genre : action, adventure, anime, animation, biography, comedy, crime, drama, fantasy, history, holiday, horror, kids & family, lgbtq+, music, musical, mystery & thriller, romance, sci-fi, sports, war, western
-    # print("\n--- Live Search for genre 'lgbtq+' ---")
-    # live_search_scifi = controller.search_movies_live(genre=["lgbtq+"])
-    # print(json.dumps(live_search_scifi, indent=2))
