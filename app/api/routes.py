@@ -17,7 +17,7 @@ async def health_check():
 
 
 # Movies Router
-movies_router = APIRouter(prefix="/movies", tags=["Movies"])
+movies_router = APIRouter(tags=["Movies"])
 movies_service = MovieService()
 
 # comment update moveis csv
@@ -27,7 +27,7 @@ movies_service = MovieService()
 #     return movies_service.update_movie_database()
 
 # use this as main crawler endpoint
-@movies_router.get("/", response_model=SearchMoviesResponse)
+@movies_router.get("/movies", response_model=SearchMoviesResponse)
 def search_movies(
     name: Optional[str] = None,
     genre: Optional[List[str]] = Query(default=None)
@@ -35,11 +35,11 @@ def search_movies(
     """Search movies live by name or genre."""
     return movies_service.search_movies_live(name=name, genre=genre or [])
 
-@movies_router.get("/{movie_name}", response_model=MovieDetails)
+@movies_router.get("/movies/{movie_name}", response_model=MovieDetails)
 def get_movie_details(movie_name: str):
     return movies_service.get_movie_details(movie_name)
 
-@movies_router.get("/genres", response_model=GenreListResponse)
+@movies_router.get("/movies/genres", response_model=GenreListResponse)
 def get_all_genres():
     """List all available genres in the movie database."""
     return movies_service.get_all_genres()
