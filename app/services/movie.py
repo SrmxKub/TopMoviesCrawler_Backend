@@ -179,11 +179,7 @@ class MovieService:
         Normalized: lowercase + stripped whitespace.
         """
         if not movies:
-            if os.path.exists(self.exporter.csv_path):
-                movies = self.exporter.import_movies_csv()
-            else:
-                # fallback: crawl online if CSV not available
-                movies = self._get_all_enriched_movies()
+            movies = self._get_all_enriched_movies()
             
         genres = set()
         for m in movies:
@@ -266,3 +262,19 @@ class MovieService:
         print("Live search complete!")
         
         return SearchMoviesResponse(count=len(movies), movies=validated_movies)
+
+    def get_movie_details(self, name=None):
+        # return "ok"
+        print("movie_name:", name)
+        if name is None or len(name) == 0:
+            return NotFoundError("No movies matched your search criteria.")
+        movies = self._crawl_movie_list()
+        for movie in movies:
+            if re.match(rf'^{name}$', movie["title"], re.IGNORECASE):
+                # return "ok"
+                result = self._crawl_movie_details(movie['link'])
+                movies_adapter = TypeAdapter(MovieDetails)
+                movie.update(result)
+                return movies_adapter.validate_python(movie)
+
+        return NotFoundError("No movies matched your search criteria.")
