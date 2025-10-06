@@ -28,16 +28,17 @@ class MovieService:
             "detail": re.compile(r"<span class='details'.*?>(.*?)</span>", re.S),
             "title": re.compile(r"<a.*?>(.*?)</a>", re.S),
             "link": re.compile(r'<a.*?href=["\'](.*?)["\'].*?>', re.S),
-            "year": re.compile(r"(\d{4})"),
+            "year": re.compile(r"\((\d{4})\)"),
         }
         
         self.page2_pattern = {
             "json": {
                 "all": re.compile(r'<script id="media-hero-json" data-json="mediaHero" type="application/json">(.*?)</script>', re.S),
-                "cover_img": re.compile(r'"thumbnail":{"url":"(.*?)"}', re.S),
+                # "cover_img": re.compile(r'"thumbnail":{"url":"(.*?)"}', re.S),
                 "genre": re.compile(r'"metadataGenres":\[(.*?)\]', re.S),
                 "release": re.compile(r'"metadataProps":.*?"Released ([A-Z][a-z]{1,4} \d{1,2}, \d{4})","(.*?)"]', re.S),
             },
+            "cover_img": re.compile(r'<rt-img.*?fallbacktheme=["\']iconic["\'].*?src=["\'](.*?)[,"\'].*?>', re.S),
             "poster_img": re.compile(r'<meta.*?property=["\']og:image["\'].*?content=["\'](.*?)["\']', re.S),
             "description_pattern": re.compile(r'<div slot="description".*? <rt-text slot="content" size="1">(.*?)</rt-text>', re.S),
             "cast_crew": {
@@ -49,22 +50,14 @@ class MovieService:
             "score_pattern": {
                 "all": re.compile(r"<media-scorecard.*?>(.*?)</media-scorecard>", re.S),
                 "tomato": {
-                    "score": re.compile(r'<rt-text.*?slot="criticsScore".*?(\d{1,2})%.*?</rt-text>', re.S), 
+                    "score": re.compile(r'<rt-text.*?slot="criticsScore".*?(\d{1,3})%.*?</rt-text>', re.S), 
                     "count": re.compile(r'<rt-link.*?slot="criticsReviews".*?>(.*?)</rt-link>', re.S)
                 },
                 "popcorn": {
-                    "score": re.compile(r'<rt-text.*?slot="audienceScore".*?(\d{1,2})%.*?</rt-text>', re.S), 
+                    "score": re.compile(r'<rt-text.*?slot="audienceScore".*?(\d{1,3})%.*?</rt-text>', re.S), 
                     "count": re.compile(r'<rt-link.*?slot="audienceReviews".*?>(.*?)</rt-link>', re.S)
                 },
             }
-        }
-
-    def _build_headers(self) -> dict:
-        return {
-            "User-Agent": random.choice(self._user_agents),
-            "Accept-Language": random.choice(self._accept_languages),
-            "Accept": random.choice(self._accepts),
-            "Referer": random.choice(self._referers),
         }
 
     # ==================================================================
@@ -121,10 +114,13 @@ class MovieService:
         
         if (json_script_match := self.page2_pattern["json"]["all"].search(html)):
             json_content = json_script_match.group(1)
-            if (cover_img_match := self.page2_pattern["json"]["cover_img"].search(json_content)):
-                details["cover_img"] = cover_img_match.group(1).strip()
+            # if (cover_img_match := self.page2_pattern["json"]["cover_img"].search(json_content)):
+            #     details["cover_img"] = cover_img_match.group(1).strip()
             if (release_match := self.page2_pattern["json"]["release"].search(json_content)):
                 details["release_date"] = release_match.group(1).strip()
+        
+        if (cover_img_match := self.page2_pattern["cover_img"].search(html)):
+            details["cover_img"] = cover_img_match.group(1).strip()
 
         if (score_card_match := self.page2_pattern["score_pattern"]["all"].search(html)):
             score_card = score_card_match.group(1)
