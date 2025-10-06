@@ -44,10 +44,6 @@ def get_all_genres():
 def get_movie_details(movie_name: str):
     return movies_service.get_movie_details(movie_name)
 
-@movies_router.get("/aaa")
-def get_aaa():
-    return movies_service._crawl_movie_list()
-
 # Export Router
 # export_router = APIRouter(prefix="/movies/export", tags=["Export"])
 # export_service = ExportService()
